@@ -33,6 +33,7 @@
 #include "core/io/certs_compressed.gen.h"
 #include "core/io/dir_access.h"
 #include "main/main.h"
+#include "servers/audio_server.h"
 #include "servers/display_server.h"
 #include "servers/rendering_server.h"
 
@@ -1185,6 +1186,10 @@ OS_LinuxBSD::OS_LinuxBSD() {
 
 #ifdef PULSEAUDIO_ENABLED
 	AudioDriverManager::add_driver(&driver_pulseaudio);
+#endif
+
+#ifdef PIPEWIRE_ENABLED
+	AudioDriverManager::add_driver(&driver_pipewire);
 #endif
 
 #ifdef ALSA_ENABLED
