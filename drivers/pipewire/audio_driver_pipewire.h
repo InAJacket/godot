@@ -31,7 +31,12 @@
 #ifndef AUDIO_DRIVER_PIPEWIRE_H
 #define AUDIO_DRIVER_PIPEWIRE_H
 #include "X11/Xdefs.h"
-#define PIPEWIRE_ENABLED
+#include "core/templates/vector.h"
+#include "pipewire/context.h"
+#include "pipewire/core.h"
+#include "pipewire/main-loop.h"
+#include "pipewire/stream.h"
+#include "spa/utils/hook.h"
 #ifdef PIPEWIRE_ENABLED
 
 #include "core/os/mutex.h"
@@ -45,23 +50,49 @@ class AudioDriverPipeWire : public AudioDriver {
 	Thread thread;
 	Mutex mutex;
 
+	int32_t *samples_in = nullptr;
+
+	static void thread_func(void *p_udata);
+	const void start_main_loop(pw_main_loop* loop);
+
+	uint32_t buffer_frames = 0;
+	unsigned int mix_rate = 0;
+	int channels = 0;
+	PackedStringArray pw_out_devices;
+	PackedStringArray pw_in_devices;
+
+	SafeFlag active;
+	SafeFlag exit_thread;
+
+	pw_main_loop *main_loop = nullptr;
+	pw_context *context = nullptr;
+	pw_core *core = nullptr;
+	pw_registry *registry = nullptr;
+	spa_hook registry_listener;
+
 	String output_device_name = "Default";
-	String new_output_device = "Default";
-	String default_output_device;
+	String new_output_device;
 
 	String input_device_name;
 	String new_input_device;
-	String default_input_device;
 
-	int mix_rate = 0;
-	unsigned int channels = 2;
-	unsigned int capture_channels = 2;
-	unsigned int buffer_frames = 0;
+	Error init_output_device();
+	void finish_output_device();
+
+	Error init_input_device();
+	void finish_input_device();
+
 
 public:
 	virtual const char *get_name() const override {
 		return "PipeWire";
 	};
+
+	static const struct pw_registry_events registry_events;
+
+	static void registry_event_global(void *data, uint32_t id,
+        uint32_t permissions, const char *type, uint32_t version,
+        const struct spa_dict *props);
 
 	virtual Error init() override;
 	virtual void start() override;
@@ -72,9 +103,20 @@ public:
 	virtual void lock() override;
 	virtual void unlock() override;
 	virtual void finish() override;
+
 	virtual PackedStringArray get_output_device_list() override;
 	virtual String get_output_device() override;
 	virtual void set_output_device(const String &p_name) override;
+
+	virtual Error input_start() override;
+	virtual Error input_stop() override;
+
+	virtual PackedStringArray get_input_device_list() override;
+	virtual String get_input_device() override;
+	virtual void set_input_device(const String &p_name) override;
+
+	AudioDriverPipeWire();
+	~AudioDriverPipeWire();
 
 };
 
