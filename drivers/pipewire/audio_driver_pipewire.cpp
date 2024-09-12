@@ -33,38 +33,67 @@
 #include "core/version_generated.gen.h"
 #include "pipewire/context.h"
 #include "pipewire/core.h"
+#include "pipewire/keys.h"
 #include "pipewire/loop.h"
 #include "pipewire/main-loop.h"
+#include "pipewire/map.h"
+#include "pipewire/node.h"
+#include "pipewire/port.h"
+#include "pipewire/properties.h"
+#include "pipewire/stream.h"
+#include "pipewire/thread-loop.h"
+#include "servers/audio_server.h"
+#include "spa/param/audio/raw.h"
 #include "spa/utils/defs.h"
 #include "spa/utils/list.h"
-#include <cstddef>
+#include <spa/param/audio/format-utils.h>
+#include <pipewire/impl.h>
 
 #ifdef PULSEAUDIO_ENABLED
 
 #include "core/config/project_settings.h"
-# include "core/os/os.h"
+#include "core/os/os.h"
 
-void AudioDriverPipeWire::thread_func(void *p_udata) {
-	AudioDriverPipeWire *driver = static_cast<AudioDriverPipeWire *>(p_udata);
+void AudioDriverPipeWire::thread_func(void *data) {
+	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
 
-	driver->start_main_loop(driver->main_loop);
+	pw_main_loop_run(ad->main_loop);
 }
 
-void AudioDriverPipeWire::registry_event_global(void *data, uint32_t id,
+void AudioDriverPipeWire::register_handler(void *data, uint32_t id,
                 uint32_t permissions, const char *type, uint32_t version,
                 const struct spa_dict *props)
 {
-        printf("object: id:%u type:%s/%d\n", id, type, version);
+	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
+
+	if (strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
+		pw_node *node = (pw_node *) pw_registry_bind(ad->registry, id, type, PW_VERSION_NODE, 0);
+		uint32_t err = pw_map_insert_new(&ad->node_map, node);
+
+		if (err == SPA_ID_INVALID) {
+			WARN_PRINT("Pipewire driver node_map error. AudioServer may not have accurate device list.");
+		}
+	}
+}
+
+void AudioDriverPipeWire::deregister_handler(void *data, uint32_t id) {
+	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
+}
+
+void AudioDriverPipeWire::on_process(void *data) {
+	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
 }
 
 const struct pw_registry_events AudioDriverPipeWire::registry_events = {
         PW_VERSION_REGISTRY_EVENTS,
-        .global = registry_event_global,
+        .global = register_handler,
+		.global_remove = deregister_handler,
 };
 
-const void AudioDriverPipeWire::start_main_loop(pw_main_loop* loop) {
-	pw_main_loop_run(loop);
-}
+const struct pw_stream_events AudioDriverPipeWire::stream_events = {
+	PW_VERSION_STREAM_EVENTS,
+	.process = on_process,
+};
 
 Error AudioDriverPipeWire::init() {
 	bool ver_ok = false;
@@ -79,20 +108,47 @@ Error AudioDriverPipeWire::init() {
 		print_verbose("Unsupported PipeWire library version!");
 		return ERR_CANT_OPEN;
 	}
+
 	active.clear();
 	exit_thread.clear();
 
 	mix_rate = _get_configured_mix_rate();
 
 	main_loop = pw_main_loop_new(nullptr);
+
 	context = pw_context_new(pw_main_loop_get_loop(main_loop), nullptr, 0);
 
 	core = pw_context_connect(context, nullptr, 0);
 
 	registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
+	node_map = PW_MAP_INIT(4);
 
 	spa_zero(registry_listener);
-	pw_registry_add_listener(registry, &registry_listener, &registry_events, nullptr);
+	pw_registry_add_listener(registry, &registry_listener, &registry_events, this);
+
+	//init_output_device();
+	pw_properties * props = pw_properties_new(
+			PW_KEY_MEDIA_TYPE, "Audio",
+			PW_KEY_MEDIA_CATEGORY, "Playback",
+			PW_KEY_MEDIA_ROLE, "Game",
+			NULL);
+	out_stream = pw_stream_new(core, "Godot-Audio-Output", props);
+
+	const struct spa_pod *params[1];
+
+	uint8_t buffer[1024];
+    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+
+	spa_audio_info_raw audio_info = SPA_AUDIO_INFO_RAW_INIT(
+                                .format = SPA_AUDIO_FORMAT_S16_LE,
+                                .rate = 44100,
+								.channels = 2);
+
+	params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &audio_info);
+
+	pw_stream_add_listener(out_stream, &out_listener, &stream_events, this);
+
+	pw_stream_connect(out_stream, SPA_DIRECTION_OUTPUT, PW_ID_ANY, PW_STREAM_FLAG_NONE, params, 1);
 
 	thread.start(AudioDriverPipeWire::thread_func, this);
 
@@ -113,8 +169,9 @@ AudioDriver::SpeakerMode AudioDriverPipeWire::get_speaker_mode() const {
 
 float AudioDriverPipeWire::get_latency() {
 	lock();
-	return 0.0;
-	// WIP
+	float latency = 0.0; //TODO
+	unlock();
+	return latency;
 }
 
 void AudioDriverPipeWire::lock() {
@@ -143,32 +200,21 @@ void AudioDriverPipeWire::finish() {
 	}
 
 	if (main_loop) {
-		pw_main_loop_quit(main_loop); // Might not be the right function.
+		pw_main_loop_quit(main_loop);
 		main_loop = nullptr;
 	}
 }
 
-Error AudioDriverPipeWire::init_output_device() { // WIP
+Error AudioDriverPipeWire::init_output_device() { //TODO NEXT
 	return OK;
 }
 
 void AudioDriverPipeWire::finish_output_device() {} // WIP
 
-Error AudioDriverPipeWire::init_input_device() { // WIP
-	return OK;
-}
 
-void AudioDriverPipeWire::finish_input_device() {} // WIP
 
 PackedStringArray AudioDriverPipeWire::get_output_device_list() {
-	pw_out_devices.clear();
-	pw_out_devices.push_back("Default");
-
-	if (context == nullptr) {
-		return pw_out_devices;
-	}
-
-	return pw_out_devices; // WIP
+	return output_devices;
 }
 
 String AudioDriverPipeWire::get_output_device() {
@@ -183,23 +229,21 @@ void AudioDriverPipeWire::set_output_device(const String &p_name) {
 
 Error AudioDriverPipeWire::input_start() {
 	lock();
-	Error err = init_input_device();
 	unlock();
 
-	return err;
+	return OK;
 }
 
 Error AudioDriverPipeWire::input_stop() {
 	lock();
-	finish_input_device();
+	pw_stream_destroy(in_stream);
 	unlock();
 
 	return OK;
 }
 
 PackedStringArray AudioDriverPipeWire::get_input_device_list() {
-	PackedStringArray a;
-	return a;
+	return input_devices;
 }
 
 String AudioDriverPipeWire::get_input_device() {
@@ -212,7 +256,9 @@ void AudioDriverPipeWire::set_input_device(const String &p_name) {
 	unlock();
 }
 
-AudioDriverPipeWire::AudioDriverPipeWire() {}
+AudioDriverPipeWire::AudioDriverPipeWire() {
+	samples_in.clear();
+}
 
 AudioDriverPipeWire::~AudioDriverPipeWire() {}
 

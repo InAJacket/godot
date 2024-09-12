@@ -35,6 +35,7 @@
 #include "pipewire/context.h"
 #include "pipewire/core.h"
 #include "pipewire/main-loop.h"
+#include "pipewire/map.h"
 #include "pipewire/stream.h"
 #include "spa/utils/hook.h"
 #ifdef PIPEWIRE_ENABLED
@@ -50,16 +51,15 @@ class AudioDriverPipeWire : public AudioDriver {
 	Thread thread;
 	Mutex mutex;
 
-	int32_t *samples_in = nullptr;
 
 	static void thread_func(void *p_udata);
 	const void start_main_loop(pw_main_loop* loop);
 
 	uint32_t buffer_frames = 0;
+	uint32_t period_size = 0;
+	uint32_t buffer_size = 0;
 	unsigned int mix_rate = 0;
 	int channels = 0;
-	PackedStringArray pw_out_devices;
-	PackedStringArray pw_in_devices;
 
 	SafeFlag active;
 	SafeFlag exit_thread;
@@ -68,20 +68,27 @@ class AudioDriverPipeWire : public AudioDriver {
 	pw_context *context = nullptr;
 	pw_core *core = nullptr;
 	pw_registry *registry = nullptr;
+	pw_thread_loop *thread_loop = nullptr;
+	pw_map node_map;
 	spa_hook registry_listener;
+	spa_hook out_listener;
+
+	pw_stream *out_stream = nullptr;
+	pw_stream *in_stream = nullptr;
 
 	String output_device_name = "Default";
 	String new_output_device;
+	PackedStringArray output_devices;
 
 	String input_device_name;
 	String new_input_device;
+	PackedStringArray input_devices;
+
+	Vector<int32_t> samples_in;
+	Vector<int16_t> samples_out;
 
 	Error init_output_device();
 	void finish_output_device();
-
-	Error init_input_device();
-	void finish_input_device();
-
 
 public:
 	virtual const char *get_name() const override {
@@ -89,10 +96,14 @@ public:
 	};
 
 	static const struct pw_registry_events registry_events;
+	static const struct pw_stream_events stream_events;
 
-	static void registry_event_global(void *data, uint32_t id,
+	static void register_handler(void *data, uint32_t id,
         uint32_t permissions, const char *type, uint32_t version,
         const struct spa_dict *props);
+	static void deregister_handler(void *data, uint32_t id);
+
+	static void on_process(void *data);
 
 	virtual Error init() override;
 	virtual void start() override;
