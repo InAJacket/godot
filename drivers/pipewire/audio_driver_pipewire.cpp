@@ -30,6 +30,7 @@
 #include "audio_driver_pipewire.h"
 #include "core/error/error_list.h"
 #include "core/error/error_macros.h"
+#include "core/os/keyboard.h"
 #include "core/version_generated.gen.h"
 #include "pipewire/context.h"
 #include "pipewire/core.h"
@@ -81,7 +82,47 @@ void AudioDriverPipeWire::deregister_handler(void *data, uint32_t id) {
 }
 
 void AudioDriverPipeWire::on_process(void *data) {
+	return;
+	// The rest of this function is for outputting sound and doesn't work yet.
+	// Returning early was easier than manually commenting out all those lines just for one commit.
 	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
+
+	pw_buffer *b;
+	spa_buffer *buf;
+	int i, c, n_frames, stride;
+	int16_t *dst;
+
+	if ((b = pw_stream_dequeue_buffer(ad->out_stream)) == nullptr) {
+        pw_log_warn("out of buffers: %m");
+        return;
+    }
+
+	buf = b->buffer;
+	if ((dst = (int16_t*) buf->datas[0].data) == nullptr) {
+		return;
+	}
+
+	stride = sizeof(int16_t) * 2;
+
+	n_frames = buf->datas[0].maxsize / stride;
+	if (b->requested) {
+		n_frames = SPA_MIN(b->requested, n_frames);
+	}
+
+	ad->samples_in.resize(n_frames * 2);
+
+	ad->audio_server_process(n_frames, ad->samples_in.ptrw());
+
+	for (i = 0; i < n_frames; i++) {
+	for (c = 0; c < 2; c++) {
+		dst[i] = (ad->samples_in[i] >> (16*c)) / 2;
+	}
+	}
+
+	buf->datas[0].chunk->offset = 0;
+    buf->datas[0].chunk->stride = stride;
+    buf->datas[0].chunk->size = n_frames * stride;
+		pw_stream_queue_buffer(ad->out_stream, b);
 }
 
 const struct pw_registry_events AudioDriverPipeWire::registry_events = {
@@ -141,7 +182,7 @@ Error AudioDriverPipeWire::init() {
 
 	spa_audio_info_raw audio_info = SPA_AUDIO_INFO_RAW_INIT(
                                 .format = SPA_AUDIO_FORMAT_S16_LE,
-                                .rate = 44100,
+                                .rate = mix_rate,
 								.channels = 2);
 
 	params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &audio_info);
@@ -258,6 +299,7 @@ void AudioDriverPipeWire::set_input_device(const String &p_name) {
 
 AudioDriverPipeWire::AudioDriverPipeWire() {
 	samples_in.clear();
+	samples_out.clear();
 }
 
 AudioDriverPipeWire::~AudioDriverPipeWire() {}
