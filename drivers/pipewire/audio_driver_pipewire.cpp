@@ -30,66 +30,44 @@
 #include "audio_driver_pipewire.h"
 #include "core/error/error_list.h"
 #include "core/error/error_macros.h"
-#include "core/os/keyboard.h"
+#include "core/string/ustring.h"
+#include "core/variant/array.h"
 #include "core/version_generated.gen.h"
 #include "pipewire/context.h"
 #include "pipewire/core.h"
 #include "pipewire/keys.h"
-#include "pipewire/loop.h"
 #include "pipewire/main-loop.h"
-#include "pipewire/map.h"
 #include "pipewire/node.h"
-#include "pipewire/port.h"
 #include "pipewire/properties.h"
 #include "pipewire/stream.h"
 #include "pipewire/thread-loop.h"
 #include "servers/audio_server.h"
 #include "spa/param/audio/raw.h"
 #include "spa/utils/defs.h"
-#include "spa/utils/list.h"
 #include <spa/param/audio/format-utils.h>
 #include <pipewire/impl.h>
 
 #ifdef PULSEAUDIO_ENABLED
 
 #include "core/config/project_settings.h"
-#include "core/os/os.h"
-
-void AudioDriverPipeWire::thread_func(void *data) {
-	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
-
-	pw_main_loop_run(ad->main_loop);
-}
 
 void AudioDriverPipeWire::register_handler(void *data, uint32_t id,
-                uint32_t permissions, const char *type, uint32_t version,
-                const struct spa_dict *props)
-{
+        uint32_t permissions, const char *type, uint32_t version,
+        const struct spa_dict *props) {
 	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
 
 	if (strcmp(type, PW_TYPE_INTERFACE_Node) == 0) {
 		pw_node *node = (pw_node *) pw_registry_bind(ad->registry, id, type, PW_VERSION_NODE, 0);
-		uint32_t err = pw_map_insert_new(&ad->node_map, node);
-
-		if (err == SPA_ID_INVALID) {
-			WARN_PRINT("Pipewire driver node_map error. AudioServer may not have accurate device list.");
-		}
 	}
 }
 
-void AudioDriverPipeWire::deregister_handler(void *data, uint32_t id) {
-	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
-}
-
 void AudioDriverPipeWire::on_process(void *data) {
-	return;
-	// The rest of this function is for outputting sound and doesn't work yet.
-	// Returning early was easier than manually commenting out all those lines just for one commit.
 	AudioDriverPipeWire *ad = static_cast<AudioDriverPipeWire *>(data);
+	ad->lock();
 
 	pw_buffer *b;
 	spa_buffer *buf;
-	int i, c, n_frames, stride;
+	int i, n_frames, stride;
 	int16_t *dst;
 
 	if ((b = pw_stream_dequeue_buffer(ad->out_stream)) == nullptr) {
@@ -102,7 +80,7 @@ void AudioDriverPipeWire::on_process(void *data) {
 		return;
 	}
 
-	stride = sizeof(int16_t) * 2;
+	stride = sizeof(int16_t) * ad->channels;
 
 	n_frames = buf->datas[0].maxsize / stride;
 	if (b->requested) {
@@ -113,30 +91,28 @@ void AudioDriverPipeWire::on_process(void *data) {
 
 	ad->audio_server_process(n_frames, ad->samples_in.ptrw());
 
-	for (i = 0; i < n_frames; i++) {
-	for (c = 0; c < 2; c++) {
-		dst[i] = (ad->samples_in[i] >> (16*c)) / 2;
-	}
+	for (i = 0; i < n_frames * ad->channels; i++) {
+		dst[i] = ad->samples_in[i] >> 16;
 	}
 
 	buf->datas[0].chunk->offset = 0;
     buf->datas[0].chunk->stride = stride;
     buf->datas[0].chunk->size = n_frames * stride;
-		pw_stream_queue_buffer(ad->out_stream, b);
+
+	pw_stream_queue_buffer(ad->out_stream, b);
+	ad->unlock();
 }
 
 const struct pw_registry_events AudioDriverPipeWire::registry_events = {
-        PW_VERSION_REGISTRY_EVENTS,
         .global = register_handler,
-		.global_remove = deregister_handler,
 };
 
 const struct pw_stream_events AudioDriverPipeWire::stream_events = {
-	PW_VERSION_STREAM_EVENTS,
 	.process = on_process,
 };
 
 Error AudioDriverPipeWire::init() {
+
 	bool ver_ok = false;
 	pw_init(nullptr, nullptr);
 	String version = pw_get_library_version();
@@ -144,16 +120,17 @@ Error AudioDriverPipeWire::init() {
 	if (ver_parts.size() >= 2) {
 		ver_ok = (ver_parts[0].to_int() >= 1); // libpipewire 1.0.0 or later
 	}
+
 	print_verbose(vformat("PipeWire %s detected.", version));
 	if (!ver_ok) {
 		print_verbose("Unsupported PipeWire library version!");
 		return ERR_CANT_OPEN;
 	}
 
+
 	active.clear();
 	exit_thread.clear();
 
-	mix_rate = _get_configured_mix_rate();
 
 	main_loop = pw_main_loop_new(nullptr);
 
@@ -162,36 +139,26 @@ Error AudioDriverPipeWire::init() {
 	core = pw_context_connect(context, nullptr, 0);
 
 	registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
-	node_map = PW_MAP_INIT(4);
 
 	spa_zero(registry_listener);
 	pw_registry_add_listener(registry, &registry_listener, &registry_events, this);
 
-	//init_output_device();
-	pw_properties * props = pw_properties_new(
-			PW_KEY_MEDIA_TYPE, "Audio",
-			PW_KEY_MEDIA_CATEGORY, "Playback",
-			PW_KEY_MEDIA_ROLE, "Game",
-			NULL);
-	out_stream = pw_stream_new(core, "Godot-Audio-Output", props);
+	String stream_name;
+	if (Engine::get_singleton()->is_editor_hint()) {
+		stream_name = VERSION_NAME " Editor";
+	} else {
+		stream_name = GLOBAL_GET("application/config/name");
+		if (stream_name.is_empty()) {
+			stream_name = VERSION_NAME " Project";
+		}
 
-	const struct spa_pod *params[1];
+	}
+	name_char = stream_name.utf8();
 
-	uint8_t buffer[1024];
-    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+	init_output_device();
 
-	spa_audio_info_raw audio_info = SPA_AUDIO_INFO_RAW_INIT(
-                                .format = SPA_AUDIO_FORMAT_S16_LE,
-                                .rate = mix_rate,
-								.channels = 2);
-
-	params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &audio_info);
-
-	pw_stream_add_listener(out_stream, &out_listener, &stream_events, this);
-
-	pw_stream_connect(out_stream, SPA_DIRECTION_OUTPUT, PW_ID_ANY, PW_STREAM_FLAG_NONE, params, 1);
-
-	thread.start(AudioDriverPipeWire::thread_func, this);
+	pw_thread_loop *tl = pw_thread_loop_new_full(pw_main_loop_get_loop(main_loop), "Godot Engine Pipewire Thread", nullptr);
+	pw_thread_loop_start(tl);
 
 	return OK;
 }
@@ -217,21 +184,19 @@ float AudioDriverPipeWire::get_latency() {
 
 void AudioDriverPipeWire::lock() {
 	mutex.lock();
+	if (thread_loop != nullptr) {
+		pw_thread_loop_lock(thread_loop);
+	}
 }
 
 void AudioDriverPipeWire::unlock() {
 	mutex.unlock();
+	if (thread_loop != nullptr) {
+		pw_thread_loop_unlock(thread_loop);
+	}
 }
 
 void AudioDriverPipeWire::finish() {
-	if (!thread.is_started()) {
-		return;
-	}
-
-	exit_thread.set();
-	if (thread.is_started()) {
-		thread.wait_to_finish();
-	}
 
 	finish_output_device();
 
@@ -242,15 +207,69 @@ void AudioDriverPipeWire::finish() {
 
 	if (main_loop) {
 		pw_main_loop_quit(main_loop);
+		pw_main_loop_destroy(main_loop);
 		main_loop = nullptr;
 	}
 }
 
-Error AudioDriverPipeWire::init_output_device() { //TODO NEXT
+Error AudioDriverPipeWire::init_output_device() {
+	lock();
+	// If there is a specified output device, check that it is really present
+	if (output_device_name != "Default") {
+		PackedStringArray list = get_output_device_list();
+		if (!list.has(output_device_name)) {
+			output_device_name = "Default";
+			new_output_device = "Default";
+		}
+	}
+
+	pw_properties * props = pw_properties_new(
+			PW_KEY_MEDIA_TYPE, "Audio",
+			PW_KEY_MEDIA_CATEGORY, "Playback",
+			PW_KEY_MEDIA_ROLE, "Game",
+			PW_KEY_NODE_DESCRIPTION, name_char.get_data(),
+			PW_KEY_NODE_NAME, name_char.get_data(),
+			PW_KEY_APP_NAME, name_char.get_data(),
+			NULL);
+	out_stream = pw_stream_new(core, "Sound", props);
+
+	mix_rate = _get_configured_mix_rate();
+
+	pw_stream_add_listener(out_stream, &out_listener, &stream_events, this);
+
+	const pw_properties *stream_props = (pw_stream_get_properties(out_stream));
+	struct pw_properties *new_props = pw_properties_copy(stream_props);
+
+	if (output_device_name == "Default") {
+		pw_properties_set(new_props, PW_KEY_TARGET_OBJECT, "");
+	} else {
+		pw_properties_set(new_props, PW_KEY_TARGET_OBJECT, (const char *)&output_device_name);
+	}
+	pw_stream_update_properties(out_stream, &new_props->dict);
+
+	uint8_t buffer[1024];
+    struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+	channels = 2;
+	spa_audio_info_raw audio_info = SPA_AUDIO_INFO_RAW_INIT(
+                                .format = SPA_AUDIO_FORMAT_S16_LE,
+                                .rate = mix_rate,
+								.channels = static_cast<uint32_t>(channels));
+
+	const struct spa_pod *params[1];
+	params[0] = spa_format_audio_raw_build(&b, SPA_PARAM_EnumFormat, &audio_info);
+
+	pw_stream_connect(out_stream, SPA_DIRECTION_OUTPUT, PW_ID_ANY, PW_STREAM_FLAG_AUTOCONNECT, params, 1);
+
+	unlock();
+
 	return OK;
 }
 
-void AudioDriverPipeWire::finish_output_device() {} // WIP
+void AudioDriverPipeWire::finish_output_device() {
+	lock();
+	pw_stream_disconnect(out_stream);
+	unlock();
+}
 
 
 
@@ -277,7 +296,6 @@ Error AudioDriverPipeWire::input_start() {
 
 Error AudioDriverPipeWire::input_stop() {
 	lock();
-	pw_stream_destroy(in_stream);
 	unlock();
 
 	return OK;

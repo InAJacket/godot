@@ -36,30 +36,25 @@
 #include "pipewire/core.h"
 #include "pipewire/main-loop.h"
 #include "pipewire/map.h"
+#include "pipewire/node.h"
 #include "pipewire/stream.h"
 #include "spa/utils/hook.h"
 #ifdef PIPEWIRE_ENABLED
 
 #include "core/os/mutex.h"
-#include "core/os/thread.h"
 #include "core/templates/safe_refcount.h"
 #include "core/variant/variant.h"
 #include "servers/audio_server.h"
 #include <pipewire/pipewire.h>
 
 class AudioDriverPipeWire : public AudioDriver {
-	Thread thread;
 	Mutex mutex;
 
 
-	static void thread_func(void *p_udata);
 	const void start_main_loop(pw_main_loop* loop);
 
-	uint32_t buffer_frames = 0;
-	uint32_t period_size = 0;
-	uint32_t buffer_size = 0;
 	unsigned int mix_rate = 0;
-	int channels = 0;
+	int channels = 2;
 
 	SafeFlag active;
 	SafeFlag exit_thread;
@@ -69,12 +64,13 @@ class AudioDriverPipeWire : public AudioDriver {
 	pw_core *core = nullptr;
 	pw_registry *registry = nullptr;
 	pw_thread_loop *thread_loop = nullptr;
-	pw_map node_map;
 	spa_hook registry_listener;
 	spa_hook out_listener;
 
 	pw_stream *out_stream = nullptr;
 	pw_stream *in_stream = nullptr;
+
+	CharString name_char;
 
 	String output_device_name = "Default";
 	String new_output_device;
@@ -98,11 +94,7 @@ public:
 	static const struct pw_registry_events registry_events;
 	static const struct pw_stream_events stream_events;
 
-	static void register_handler(void *data, uint32_t id,
-        uint32_t permissions, const char *type, uint32_t version,
-        const struct spa_dict *props);
-	static void deregister_handler(void *data, uint32_t id);
-
+	static void register_handler(void *data, uint32_t id, uint32_t permissions, const char *type, uint32_t version, const struct spa_dict *props);
 	static void on_process(void *data);
 
 	virtual Error init() override;
