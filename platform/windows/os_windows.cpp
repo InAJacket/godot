@@ -101,7 +101,7 @@ static String fix_path(const String &p_path) {
 	}
 	path = path.simplify_path();
 	path = path.replace("/", "\\");
-	if (!path.is_network_share_path() && !path.begins_with(R"(\\?\)")) {
+	if (path.size() >= MAX_PATH && !path.is_network_share_path() && !path.begins_with(R"(\\?\)")) {
 		path = R"(\\?\)" + path;
 	}
 	return path;
@@ -878,7 +878,7 @@ Dictionary OS_Windows::get_memory_info() const {
 	return meminfo;
 }
 
-Dictionary OS_Windows::execute_with_pipe(const String &p_path, const List<String> &p_arguments) {
+Dictionary OS_Windows::execute_with_pipe(const String &p_path, const List<String> &p_arguments, bool p_blocking) {
 #define CLEAN_PIPES               \
 	if (pipe_in[0] != 0) {        \
 		CloseHandle(pipe_in[0]);  \
@@ -977,11 +977,11 @@ Dictionary OS_Windows::execute_with_pipe(const String &p_path, const List<String
 
 	Ref<FileAccessWindowsPipe> main_pipe;
 	main_pipe.instantiate();
-	main_pipe->open_existing(pipe_out[0], pipe_in[1]);
+	main_pipe->open_existing(pipe_out[0], pipe_in[1], p_blocking);
 
 	Ref<FileAccessWindowsPipe> err_pipe;
 	err_pipe.instantiate();
-	err_pipe->open_existing(pipe_err[0], 0);
+	err_pipe->open_existing(pipe_err[0], 0, p_blocking);
 
 	ret["stdio"] = main_pipe;
 	ret["stderr"] = err_pipe;
@@ -2044,7 +2044,9 @@ OS_Windows::OS_Windows(HINSTANCE _hInstance) {
 	// NOTE: The engine does not use ANSI escape codes to color error/warning messages; it uses Windows API calls instead.
 	// Therefore, error/warning messages are still colored on Windows versions older than 10.
 	HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD outMode = ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+	DWORD outMode = 0;
+	GetConsoleMode(stdoutHandle, &outMode);
+	outMode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
 	if (!SetConsoleMode(stdoutHandle, outMode)) {
 		// Windows 8.1 or below, or Windows 10 prior to Anniversary Update.
 		print_verbose("Can't set the ENABLE_VIRTUAL_TERMINAL_PROCESSING Windows console mode. `print_rich()` will not work as expected.");

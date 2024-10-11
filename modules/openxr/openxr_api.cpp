@@ -271,17 +271,16 @@ OpenXRAPI *OpenXRAPI::singleton = nullptr;
 Vector<OpenXRExtensionWrapper *> OpenXRAPI::registered_extension_wrappers;
 
 bool OpenXRAPI::openxr_is_enabled(bool p_check_run_in_editor) {
-	// @TODO we need an overrule switch so we can force enable openxr, i.e run "godot --openxr_enabled"
-
-	if (Engine::get_singleton()->is_editor_hint() && p_check_run_in_editor) {
-		// Disabled for now, using XR inside of the editor we'll be working on during the coming months.
-		return false;
-	} else {
-		if (XRServer::get_xr_mode() == XRServer::XRMODE_DEFAULT) {
-			return GLOBAL_GET("xr/openxr/enabled");
+	if (XRServer::get_xr_mode() == XRServer::XRMODE_DEFAULT) {
+		if (Engine::get_singleton()->is_editor_hint() && p_check_run_in_editor) {
+			// For now, don't start OpenXR when the editor starts up. In the future, this may change
+			// if we want to integrate more XR features into the editor experience.
+			return false;
 		} else {
-			return XRServer::get_xr_mode() == XRServer::XRMODE_ON;
+			return GLOBAL_GET("xr/openxr/enabled");
 		}
+	} else {
+		return XRServer::get_xr_mode() == XRServer::XRMODE_ON;
 	}
 }
 
@@ -557,14 +556,11 @@ bool OpenXRAPI::create_instance() {
 		extension_ptrs.push_back(enabled_extensions[i].get_data());
 	}
 
-	// Get our project name
-	String project_name = GLOBAL_GET("application/config/name");
-
 	// Create our OpenXR instance
 	XrApplicationInfo application_info{
-		"", // applicationName, we'll set this down below
+		"Godot Engine", // applicationName, if we're running a game we'll update this down below.
 		1, // applicationVersion, we don't currently have this
-		"Godot Game Engine", // engineName
+		"Godot Engine", // engineName
 		VERSION_MAJOR * 10000 + VERSION_MINOR * 100 + VERSION_PATCH, // engineVersion 4.0 -> 40000, 4.0.1 -> 40001, 4.1 -> 40100, etc.
 		XR_API_VERSION_1_0 // apiVersion
 	};
@@ -588,7 +584,11 @@ bool OpenXRAPI::create_instance() {
 		extension_ptrs.ptr() // enabledExtensionNames
 	};
 
-	copy_string_to_char_buffer(project_name, instance_create_info.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE);
+	// Get our project name
+	String project_name = GLOBAL_GET("application/config/name");
+	if (!project_name.is_empty()) {
+		copy_string_to_char_buffer(project_name, instance_create_info.applicationInfo.applicationName, XR_MAX_APPLICATION_NAME_SIZE);
+	}
 
 	XrResult result = xrCreateInstance(&instance_create_info, &instance);
 	ERR_FAIL_COND_V_MSG(XR_FAILED(result), false, "Failed to create XR instance.");
@@ -1247,7 +1247,7 @@ bool OpenXRAPI::create_main_swapchains(Size2i p_size) {
 			return false;
 		}
 
-		set_object_name(XR_OBJECT_TYPE_SWAPCHAIN, uint64_t(render_state.main_swapchains[OPENXR_SWAPCHAIN_COLOR].get_swapchain()), "Main depth swapchain");
+		set_object_name(XR_OBJECT_TYPE_SWAPCHAIN, uint64_t(render_state.main_swapchains[OPENXR_SWAPCHAIN_DEPTH].get_swapchain()), "Main depth swapchain");
 	}
 
 	// We create our velocity swapchain if:
@@ -2583,7 +2583,6 @@ OpenXRAPI::OpenXRAPI() {
 
 	if (Engine::get_singleton()->is_editor_hint()) {
 		// Enabled OpenXR in the editor? Adjust our settings for the editor
-
 	} else {
 		// Load settings from project settings
 		int form_factor_setting = GLOBAL_GET("xr/openxr/form_factor");

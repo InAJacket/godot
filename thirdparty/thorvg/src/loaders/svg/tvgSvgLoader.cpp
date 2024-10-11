@@ -2183,6 +2183,7 @@ static SvgNode* _createTextNode(SvgLoaderData* loader, SvgNode* parent, const ch
     //TODO: support the def font and size as used in a system?
     loader->svgParse->node->node.text.fontSize = 10.0f;
     loader->svgParse->node->node.text.fontFamily = nullptr;
+    loader->svgParse->node->node.text.text = nullptr;
 
     func(buf, bufLength, _attrParseTextNode, loader);
 
@@ -3288,6 +3289,7 @@ static void _svgLoaderParserXmlClose(SvgLoaderData* loader, const char* content,
     for (unsigned int i = 0; i < sizeof(graphicsTags) / sizeof(graphicsTags[0]); i++) {
         if (!strncmp(tagName, graphicsTags[i].tag, sz)) {
             loader->currentGraphicsNode = nullptr;
+            if (!strncmp(tagName, "text", 4)) loader->openedTag = OpenedTagType::Other;
             loader->stack.pop();
             break;
         }
@@ -3361,11 +3363,9 @@ static void _svgLoaderParserXmlOpen(SvgLoaderData* loader, const char* content, 
         node = method(loader, parent, attrs, attrsLength, simpleXmlParseAttributes);
         if (node && !empty) {
             if (!strcmp(tagName, "text")) loader->openedTag = OpenedTagType::Text;
-            else {
-                auto defs = _createDefsNode(loader, nullptr, nullptr, 0, nullptr);
-                loader->stack.push(defs);
-                loader->currentGraphicsNode = node;
-            }
+            auto defs = _createDefsNode(loader, nullptr, nullptr, 0, nullptr);
+            loader->stack.push(defs);
+            loader->currentGraphicsNode = node;
         }
     } else if ((gradientMethod = _findGradientFactory(tagName))) {
         SvgStyleGradient* gradient;
@@ -3401,9 +3401,7 @@ static void _svgLoaderParserXmlOpen(SvgLoaderData* loader, const char* content, 
 static void _svgLoaderParserText(SvgLoaderData* loader, const char* content, unsigned int length)
 {
     auto text = &loader->svgParse->node->node.text;
-    if (text->text) free(text->text);
-    text->text = strDuplicate(content, length);
-    loader->openedTag = OpenedTagType::Other;
+    text->text = strAppend(text->text, content, length);
 }
 
 

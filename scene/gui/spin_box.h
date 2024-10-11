@@ -86,8 +86,7 @@ class SpinBox : public Range {
 		bool down_button_disabled = false;
 	} state_cache;
 
-	void _line_edit_focus_enter();
-	void _line_edit_focus_exit();
+	void _line_edit_editing_toggled(bool p_toggled_on);
 
 	inline void _compute_sizes();
 	inline int _get_widest_button_icon_width();
@@ -127,8 +126,9 @@ class SpinBox : public Range {
 		int buttons_vertical_separation = 0;
 		int field_and_buttons_separation = 0;
 		int buttons_width = 0;
-		int set_min_buttons_width_from_icons = 0;
-
+#ifndef DISABLE_DEPRECATED
+		bool set_min_buttons_width_from_icons = false;
+#endif
 	} theme_cache;
 
 	void _mouse_exited();

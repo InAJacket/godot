@@ -29,17 +29,12 @@
 /**************************************************************************/
 
 #include "control.h"
-#include "control.compat.inc"
 
 #include "container.h"
 #include "core/config/project_settings.h"
 #include "core/math/geometry_2d.h"
-#include "core/os/keyboard.h"
 #include "core/os/os.h"
-#include "core/string/print_string.h"
 #include "core/string/translation_server.h"
-#include "scene/gui/label.h"
-#include "scene/gui/panel.h"
 #include "scene/main/canvas_layer.h"
 #include "scene/main/window.h"
 #include "scene/theme/theme_db.h"
@@ -248,7 +243,7 @@ void Control::get_argument_options(const StringName &p_function, int p_idx, List
 
 PackedStringArray Control::get_configuration_warnings() const {
 	ERR_READ_THREAD_GUARD_V(PackedStringArray());
-	PackedStringArray warnings = Node::get_configuration_warnings();
+	PackedStringArray warnings = CanvasItem::get_configuration_warnings();
 
 	if (data.mouse_filter == MOUSE_FILTER_IGNORE && !data.tooltip.is_empty()) {
 		warnings.push_back(RTR("The Hint Tooltip won't be displayed as the control's Mouse Filter is set to \"Ignore\". To solve this, set the Mouse Filter to \"Stop\" or \"Pass\"."));
@@ -2356,6 +2351,24 @@ void Control::_window_find_focus_neighbor(const Vector2 &p_dir, Node *p_at, cons
 		points[2] = xform.xform(c->get_size());
 		points[3] = xform.xform(Point2(0, c->get_size().y));
 
+		// Tie-breaking aims to address situations where a potential focus neighbor's bounding rect
+		// is right next to the currently focused control (e.g. in BoxContainer with
+		// separation overridden to 0). This needs specific handling so that the correct
+		// focus neighbor is selected.
+
+		// Calculate centers of the potential neighbor, currently focused, and closest controls.
+		Point2 center = xform.xform(0.5 * c->get_size());
+		// We only have the points, not an actual reference.
+		Point2 p_center = 0.25 * (p_points[0] + p_points[1] + p_points[2] + p_points[3]);
+		Point2 closest_center;
+		bool should_tiebreak = false;
+		if (*r_closest != nullptr) {
+			should_tiebreak = true;
+			Control *closest = *r_closest;
+			Transform2D closest_xform = closest->get_global_transform();
+			closest_center = closest_xform.xform(0.5 * closest->get_size());
+		}
+
 		real_t min = 1e7;
 
 		for (int i = 0; i < 4; i++) {
@@ -2376,10 +2389,15 @@ void Control::_window_find_focus_neighbor(const Vector2 &p_dir, Node *p_at, cons
 
 					Vector2 pa, pb;
 					real_t d = Geometry2D::get_closest_points_between_segments(la, lb, fa, fb, pa, pb);
-					//real_t d = Geometry2D::get_closest_distance_between_segments(Vector3(la.x,la.y,0),Vector3(lb.x,lb.y,0),Vector3(fa.x,fa.y,0),Vector3(fb.x,fb.y,0));
 					if (d < r_closest_dist) {
 						r_closest_dist = d;
 						*r_closest = c;
+					} else if (should_tiebreak && d == r_closest_dist) {
+						// Tie-break in favor of the control most aligned with p_dir.
+						if (p_dir.dot((center - p_center).normalized()) > p_dir.dot((closest_center - p_center).normalized())) {
+							r_closest_dist = d;
+							*r_closest = c;
+						}
 					}
 				}
 			}
@@ -3139,6 +3157,16 @@ bool Control::is_auto_translating() const {
 }
 #endif
 
+void Control::set_tooltip_auto_translate_mode(AutoTranslateMode p_mode) {
+	ERR_MAIN_THREAD_GUARD;
+	data.tooltip_auto_translate_mode = p_mode;
+}
+
+Node::AutoTranslateMode Control::get_tooltip_auto_translate_mode() const {
+	ERR_READ_THREAD_GUARD_V(AUTO_TRANSLATE_MODE_INHERIT);
+	return data.tooltip_auto_translate_mode;
+}
+
 // Extra properties.
 
 void Control::set_tooltip_text(const String &p_hint) {
@@ -3488,6 +3516,8 @@ void Control::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_v_grow_direction", "direction"), &Control::set_v_grow_direction);
 	ClassDB::bind_method(D_METHOD("get_v_grow_direction"), &Control::get_v_grow_direction);
 
+	ClassDB::bind_method(D_METHOD("set_tooltip_auto_translate_mode", "mode"), &Control::set_tooltip_auto_translate_mode);
+	ClassDB::bind_method(D_METHOD("get_tooltip_auto_translate_mode"), &Control::get_tooltip_auto_translate_mode);
 	ClassDB::bind_method(D_METHOD("set_tooltip_text", "hint"), &Control::set_tooltip_text);
 	ClassDB::bind_method(D_METHOD("get_tooltip_text"), &Control::get_tooltip_text);
 	ClassDB::bind_method(D_METHOD("get_tooltip", "at_position"), &Control::get_tooltip, DEFVAL(Point2()));
@@ -3595,6 +3625,7 @@ void Control::_bind_methods() {
 
 	ADD_GROUP("Tooltip", "tooltip_");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "tooltip_text", PROPERTY_HINT_MULTILINE_TEXT), "set_tooltip_text", "get_tooltip_text");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "tooltip_auto_translate_mode", PROPERTY_HINT_ENUM, "Inherit,Always,Disabled"), "set_tooltip_auto_translate_mode", "get_tooltip_auto_translate_mode");
 
 	ADD_GROUP("Focus", "focus_");
 	ADD_PROPERTYI(PropertyInfo(Variant::NODE_PATH, "focus_neighbor_left", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Control"), "set_focus_neighbor", "get_focus_neighbor", SIDE_LEFT);

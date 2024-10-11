@@ -189,6 +189,8 @@ public:
 
 		GDScriptParser::DataType get_typed_container_type() const;
 
+		bool can_reference(const DataType &p_other) const;
+
 		bool operator==(const DataType &p_other) const {
 			if (type_source == UNDETECTED || p_other.type_source == UNDETECTED) {
 				return true; // Can be considered equal for parsing purposes.
@@ -1505,6 +1507,7 @@ private:
 	bool export_annotations(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	bool export_storage_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	bool export_custom_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
+	bool export_tool_button_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	template <PropertyUsageFlags t_usage>
 	bool export_group_annotations(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	bool warning_annotations(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);

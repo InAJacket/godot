@@ -153,6 +153,7 @@ private:
 
 			Color background_color = Color(0, 0, 0, 0);
 			bool hidden = false;
+			int line_count = 0;
 			int height = 0;
 			int width = 0;
 
@@ -178,16 +179,19 @@ private:
 		bool use_default_word_separators = true;
 		bool use_custom_word_separators = false;
 
-		int line_height = -1;
-		int max_width = -1;
+		mutable bool max_line_width_dirty = true;
+		mutable bool max_line_height_dirty = true;
+		mutable int max_line_width = 0;
+		mutable int max_line_height = 0;
+		mutable int total_visible_line_count = 0;
 		int width = -1;
 
 		int tab_size = 4;
 		int gutter_count = 0;
 		bool indent_wrapped_lines = false;
 
-		void _calculate_line_height();
-		void _calculate_max_line_width();
+		void _calculate_line_height() const;
+		void _calculate_max_line_width() const;
 
 	public:
 		void set_tab_size(int p_tab_size);
@@ -203,6 +207,7 @@ private:
 		int get_line_height() const;
 		int get_line_width(int p_line, int p_wrap_index = -1) const;
 		int get_max_width() const;
+		int get_total_visible_line_count() const;
 
 		void set_use_default_word_separators(bool p_enabled);
 		bool is_default_word_separators_enabled() const;
@@ -226,18 +231,8 @@ private:
 		const Ref<TextParagraph> get_line_data(int p_line) const;
 
 		void set(int p_line, const String &p_text, const Array &p_bidi_override);
-		void set_hidden(int p_line, bool p_hidden) {
-			if (text[p_line].hidden == p_hidden) {
-				return;
-			}
-			text.write[p_line].hidden = p_hidden;
-			if (!p_hidden && text[p_line].width > max_width) {
-				max_width = text[p_line].width;
-			} else if (p_hidden && text[p_line].width == max_width) {
-				_calculate_max_line_width();
-			}
-		}
-		bool is_hidden(int p_line) const { return text[p_line].hidden; }
+		void set_hidden(int p_line, bool p_hidden);
+		bool is_hidden(int p_line) const;
 		void insert(int p_at, const Vector<String> &p_text, const Vector<Array> &p_bidi_override);
 		void remove_range(int p_from_line, int p_to_line);
 		int size() const { return text.size(); }
@@ -248,7 +243,7 @@ private:
 		void invalidate_all();
 		void invalidate_all_lines();
 
-		_FORCE_INLINE_ const String &operator[](int p_line) const;
+		_FORCE_INLINE_ String operator[](int p_line) const;
 
 		/* Gutters. */
 		void add_gutter(int p_at);
@@ -281,6 +276,7 @@ private:
 	bool setting_text = false;
 
 	bool alt_start = false;
+	bool alt_start_no_hold = false;
 	uint32_t alt_code = 0;
 
 	// Text properties.
@@ -323,6 +319,7 @@ private:
 	bool shortcut_keys_enabled = true;
 	bool virtual_keyboard_enabled = true;
 	bool middle_mouse_paste_enabled = true;
+	bool empty_selection_clipboard_enabled = true;
 
 	// Overridable actions.
 	String cut_copy_line = "";
@@ -453,6 +450,7 @@ private:
 	void _caret_changed(int p_caret = -1);
 	void _emit_caret_changed();
 
+	void _show_virtual_keyboard();
 	void _reset_caret_blink_timer();
 	void _toggle_draw_caret();
 
@@ -568,8 +566,10 @@ private:
 
 	/* Syntax highlighting. */
 	Ref<SyntaxHighlighter> syntax_highlighter;
+	HashMap<int, Vector<Pair<int64_t, Color>>> syntax_highlighting_cache;
 
-	Dictionary _get_line_syntax_highlighting(int p_line);
+	Vector<Pair<int64_t, Color>> _get_line_syntax_highlighting(int p_line);
+	void _clear_syntax_highlighting_cache();
 
 	/* Visual. */
 	struct ThemeCache {
@@ -770,6 +770,9 @@ public:
 
 	void set_middle_mouse_paste_enabled(bool p_enabled);
 	bool is_middle_mouse_paste_enabled() const;
+
+	void set_empty_selection_clipboard_enabled(bool p_enabled);
+	bool is_empty_selection_clipboard_enabled() const;
 
 	// Text manipulation
 	void clear();
@@ -1023,6 +1026,7 @@ public:
 	void add_gutter(int p_at = -1);
 	void remove_gutter(int p_gutter);
 	int get_gutter_count() const;
+	Vector2i get_hovered_gutter() const { return hovered_gutter; }
 
 	void set_gutter_name(int p_gutter, const String &p_name);
 	String get_gutter_name(int p_gutter) const;

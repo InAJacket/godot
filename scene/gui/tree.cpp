@@ -62,8 +62,15 @@ void TreeItem::Cell::draw_icon(const RID &p_where, const Point2 &p_pos, const Si
 
 	if (icon_region == Rect2i()) {
 		icon->draw_rect_region(p_where, Rect2(p_pos, dsize), Rect2(Point2(), icon->get_size()), p_color);
+		if (icon_overlay.is_valid()) {
+			Vector2 offset = icon->get_size() - icon_overlay->get_size();
+			icon_overlay->draw_rect_region(p_where, Rect2(p_pos + offset, dsize), Rect2(Point2(), icon_overlay->get_size()), p_color);
+		}
 	} else {
 		icon->draw_rect_region(p_where, Rect2(p_pos, dsize), icon_region, p_color);
+		if (icon_overlay.is_valid()) {
+			icon_overlay->draw_rect_region(p_where, Rect2(p_pos, dsize), icon_region, p_color);
+		}
 	}
 }
 
@@ -178,6 +185,26 @@ TreeItem::TreeCellMode TreeItem::get_cell_mode(int p_column) const {
 	return cells[p_column].mode;
 }
 
+/* auto translate mode */
+void TreeItem::set_auto_translate_mode(int p_column, Node::AutoTranslateMode p_mode) {
+	ERR_FAIL_INDEX(p_column, cells.size());
+
+	if (cells[p_column].auto_translate_mode == p_mode) {
+		return;
+	}
+
+	cells.write[p_column].auto_translate_mode = p_mode;
+	cells.write[p_column].dirty = true;
+	cells.write[p_column].cached_minimum_size_dirty = true;
+
+	_changed_notify(p_column);
+}
+
+Node::AutoTranslateMode TreeItem::get_auto_translate_mode(int p_column) const {
+	ERR_FAIL_INDEX_V(p_column, cells.size(), Node::AUTO_TRANSLATE_MODE_INHERIT);
+	return cells[p_column].auto_translate_mode;
+}
+
 /* multiline editable */
 void TreeItem::set_edit_multiline(int p_column, bool p_multiline) {
 	ERR_FAIL_INDEX(p_column, cells.size());
@@ -238,6 +265,24 @@ void TreeItem::propagate_check(int p_column, bool p_emit_signal) {
 	}
 	_propagate_check_through_children(p_column, ch, p_emit_signal);
 	_propagate_check_through_parents(p_column, p_emit_signal);
+}
+
+String TreeItem::atr(int p_column, const String &p_text) const {
+	ERR_FAIL_INDEX_V(p_column, cells.size(), tree->atr(p_text));
+
+	switch (cells[p_column].auto_translate_mode) {
+		case Node::AUTO_TRANSLATE_MODE_INHERIT: {
+			return tree->atr(p_text);
+		} break;
+		case Node::AUTO_TRANSLATE_MODE_ALWAYS: {
+			return tree->tr(p_text);
+		} break;
+		case Node::AUTO_TRANSLATE_MODE_DISABLED: {
+			return p_text;
+		} break;
+	}
+
+	ERR_FAIL_V_MSG(tree->atr(p_text), "Unexpected auto translate mode: " + itos(cells[p_column].auto_translate_mode));
 }
 
 void TreeItem::_propagate_check_through_children(int p_column, bool p_checked, bool p_emit_signal) {
@@ -316,7 +361,7 @@ void TreeItem::set_text(int p_column, String p_text) {
 	} else {
 		// Don't auto translate if it's in string mode and editable, as the text can be changed to anything by the user.
 		if (tree && (!cells[p_column].editable || cells[p_column].mode != TreeItem::CELL_MODE_STRING)) {
-			cells.write[p_column].xl_text = tree->atr(p_text);
+			cells.write[p_column].xl_text = atr(p_column, p_text);
 		} else {
 			cells.write[p_column].xl_text = p_text;
 		}
@@ -475,6 +520,24 @@ void TreeItem::set_icon(int p_column, const Ref<Texture2D> &p_icon) {
 Ref<Texture2D> TreeItem::get_icon(int p_column) const {
 	ERR_FAIL_INDEX_V(p_column, cells.size(), Ref<Texture2D>());
 	return cells[p_column].icon;
+}
+
+void TreeItem::set_icon_overlay(int p_column, const Ref<Texture2D> &p_icon_overlay) {
+	ERR_FAIL_INDEX(p_column, cells.size());
+
+	if (cells[p_column].icon_overlay == p_icon_overlay) {
+		return;
+	}
+
+	cells.write[p_column].icon_overlay = p_icon_overlay;
+	cells.write[p_column].cached_minimum_size_dirty = true;
+
+	_changed_notify(p_column);
+}
+
+Ref<Texture2D> TreeItem::get_icon_overlay(int p_column) const {
+	ERR_FAIL_INDEX_V(p_column, cells.size(), Ref<Texture2D>());
+	return cells[p_column].icon_overlay;
 }
 
 void TreeItem::set_icon_region(int p_column, const Rect2 &p_icon_region) {
@@ -1596,6 +1659,9 @@ void TreeItem::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cell_mode", "column", "mode"), &TreeItem::set_cell_mode);
 	ClassDB::bind_method(D_METHOD("get_cell_mode", "column"), &TreeItem::get_cell_mode);
 
+	ClassDB::bind_method(D_METHOD("set_auto_translate_mode", "column", "mode"), &TreeItem::set_auto_translate_mode);
+	ClassDB::bind_method(D_METHOD("get_auto_translate_mode", "column"), &TreeItem::get_auto_translate_mode);
+
 	ClassDB::bind_method(D_METHOD("set_edit_multiline", "column", "multiline"), &TreeItem::set_edit_multiline);
 	ClassDB::bind_method(D_METHOD("is_edit_multiline", "column"), &TreeItem::is_edit_multiline);
 
@@ -1632,6 +1698,9 @@ void TreeItem::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_icon", "column", "texture"), &TreeItem::set_icon);
 	ClassDB::bind_method(D_METHOD("get_icon", "column"), &TreeItem::get_icon);
+
+	ClassDB::bind_method(D_METHOD("set_icon_overlay", "column", "texture"), &TreeItem::set_icon_overlay);
+	ClassDB::bind_method(D_METHOD("get_icon_overlay", "column"), &TreeItem::get_icon_overlay);
 
 	ClassDB::bind_method(D_METHOD("set_icon_region", "column", "region"), &TreeItem::set_icon_region);
 	ClassDB::bind_method(D_METHOD("get_icon_region", "column"), &TreeItem::get_icon_region);
@@ -1981,7 +2050,7 @@ void Tree::update_item_cell(TreeItem *p_item, int p_col) {
 
 			int option = (int)p_item->cells[p_col].val;
 
-			valtext = atr(ETR("(Other)"));
+			valtext = p_item->atr(p_col, ETR("(Other)"));
 			Vector<String> strings = p_item->cells[p_col].text.split(",");
 			for (int j = 0; j < strings.size(); j++) {
 				int value = j;
@@ -1989,7 +2058,7 @@ void Tree::update_item_cell(TreeItem *p_item, int p_col) {
 					value = strings[j].get_slicec(':', 1).to_int();
 				}
 				if (option == value) {
-					valtext = atr(strings[j].get_slicec(':', 0));
+					valtext = p_item->atr(p_col, strings[j].get_slicec(':', 0));
 					break;
 				}
 			}
@@ -2000,7 +2069,7 @@ void Tree::update_item_cell(TreeItem *p_item, int p_col) {
 	} else {
 		// Don't auto translate if it's in string mode and editable, as the text can be changed to anything by the user.
 		if (!p_item->cells[p_col].editable || p_item->cells[p_col].mode != TreeItem::CELL_MODE_STRING) {
-			p_item->cells.write[p_col].xl_text = atr(p_item->cells[p_col].text);
+			p_item->cells.write[p_col].xl_text = p_item->atr(p_col, p_item->cells[p_col].text);
 		} else {
 			p_item->cells.write[p_col].xl_text = p_item->cells[p_col].text;
 		}
@@ -3466,29 +3535,37 @@ void Tree::gui_input(const Ref<InputEvent> &p_event) {
 			accept_event();
 		}
 
-		if (!selected_item || select_mode == SELECT_ROW || selected_col > (columns.size() - 1)) {
+		if (!selected_item || selected_col > (columns.size() - 1)) {
 			return;
 		}
+
 		if (k.is_valid() && k->is_shift_pressed()) {
 			selected_item->set_collapsed_recursive(false);
-		} else {
+		} else if (select_mode != SELECT_ROW) {
 			_go_right();
+		} else if (selected_item->get_first_child() != nullptr && selected_item->is_collapsed()) {
+			selected_item->set_collapsed(false);
+		} else {
+			_go_down();
 		}
 	} else if (p_event->is_action("ui_left") && p_event->is_pressed()) {
 		if (!cursor_can_exit_tree) {
 			accept_event();
 		}
 
-		if (!selected_item || select_mode == SELECT_ROW || selected_col < 0) {
+		if (!selected_item || selected_col < 0) {
 			return;
 		}
 
 		if (k.is_valid() && k->is_shift_pressed()) {
 			selected_item->set_collapsed_recursive(true);
-		} else {
+		} else if (select_mode != SELECT_ROW) {
 			_go_left();
+		} else if (selected_item->get_first_child() != nullptr && !selected_item->is_collapsed()) {
+			selected_item->set_collapsed(true);
+		} else {
+			_go_up();
 		}
-
 	} else if (p_event->is_action("ui_up") && p_event->is_pressed() && !is_command) {
 		if (!cursor_can_exit_tree) {
 			accept_event();
@@ -3957,25 +4034,25 @@ void Tree::gui_input(const Ref<InputEvent> &p_event) {
 
 			} break;
 			case MouseButton::WHEEL_UP: {
-				if (_scroll(false, -mb->get_factor() / 8)) {
+				if (_scroll(mb->is_shift_pressed(), -mb->get_factor() / 8)) {
 					accept_event();
 				}
 
 			} break;
 			case MouseButton::WHEEL_DOWN: {
-				if (_scroll(false, mb->get_factor() / 8)) {
+				if (_scroll(mb->is_shift_pressed(), mb->get_factor() / 8)) {
 					accept_event();
 				}
 
 			} break;
 			case MouseButton::WHEEL_LEFT: {
-				if (_scroll(true, -mb->get_factor() / 8)) {
+				if (_scroll(!mb->is_shift_pressed(), -mb->get_factor() / 8)) {
 					accept_event();
 				}
 
 			} break;
 			case MouseButton::WHEEL_RIGHT: {
-				if (_scroll(true, mb->get_factor() / 8)) {
+				if (_scroll(!mb->is_shift_pressed(), mb->get_factor() / 8)) {
 					accept_event();
 				}
 

@@ -39,6 +39,7 @@
 #include "core/string/string_builder.h"
 #include "core/version_generated.gen.h"
 #include "editor/doc_data_compressed.gen.h"
+#include "editor/editor_main_screen.h"
 #include "editor/editor_node.h"
 #include "editor/editor_paths.h"
 #include "editor/editor_property_name_processor.h"
@@ -376,10 +377,10 @@ static void _add_type_to_rt(const String &p_type, const String &p_enum, bool p_i
 	}
 
 	p_rt->push_color(type_color);
-	bool add_array = false;
+	bool add_typed_container = false;
 	if (can_ref) {
 		if (link_t.ends_with("[]")) {
-			add_array = true;
+			add_typed_container = true;
 			link_t = link_t.trim_suffix("[]");
 			display_t = display_t.trim_suffix("[]");
 
@@ -387,6 +388,22 @@ static void _add_type_to_rt(const String &p_type, const String &p_enum, bool p_i
 			p_rt->add_text("Array");
 			p_rt->pop(); // meta
 			p_rt->add_text("[");
+		} else if (link_t.begins_with("Dictionary[")) {
+			add_typed_container = true;
+			link_t = link_t.trim_prefix("Dictionary[").trim_suffix("]");
+			display_t = display_t.trim_prefix("Dictionary[").trim_suffix("]");
+
+			p_rt->push_meta("#Dictionary", RichTextLabel::META_UNDERLINE_ON_HOVER); // class
+			p_rt->add_text("Dictionary");
+			p_rt->pop(); // meta
+			p_rt->add_text("[");
+			p_rt->push_meta("#" + link_t.get_slice(", ", 0), RichTextLabel::META_UNDERLINE_ON_HOVER); // class
+			p_rt->add_text(_contextualize_class_specifier(display_t.get_slice(", ", 0), p_class));
+			p_rt->pop(); // meta
+			p_rt->add_text(", ");
+
+			link_t = link_t.get_slice(", ", 1);
+			display_t = _contextualize_class_specifier(display_t.get_slice(", ", 1), p_class);
 		} else if (is_bitfield) {
 			p_rt->push_color(Color(type_color, 0.5));
 			p_rt->push_hint(TTR("This value is an integer composed as a bitmask of the following flags."));
@@ -405,7 +422,7 @@ static void _add_type_to_rt(const String &p_type, const String &p_enum, bool p_i
 	p_rt->add_text(display_t);
 	if (can_ref) {
 		p_rt->pop(); // meta
-		if (add_array) {
+		if (add_typed_container) {
 			p_rt->add_text("]");
 		} else if (is_bitfield) {
 			p_rt->push_color(Color(type_color, 0.5));
@@ -2294,7 +2311,7 @@ void EditorHelp::_update_doc() {
 void EditorHelp::_request_help(const String &p_string) {
 	Error err = _goto_desc(p_string);
 	if (err == OK) {
-		EditorNode::get_singleton()->set_visible_editor(EditorNode::EDITOR_SCRIPT);
+		EditorNode::get_singleton()->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
 	}
 }
 
@@ -3117,8 +3134,6 @@ void EditorHelp::init_gdext_pointers() {
 EditorHelp::EditorHelp() {
 	set_custom_minimum_size(Size2(150 * EDSCALE, 0));
 
-	EDITOR_DEF("text_editor/help/sort_functions_alphabetically", true);
-
 	class_desc = memnew(RichTextLabel);
 	class_desc->set_tab_size(8);
 	add_child(class_desc);
@@ -3589,7 +3604,7 @@ void EditorHelpBit::_update_labels() {
 }
 
 void EditorHelpBit::_go_to_help(const String &p_what) {
-	EditorNode::get_singleton()->set_visible_editor(EditorNode::EDITOR_SCRIPT);
+	EditorNode::get_singleton()->get_editor_main_screen()->select(EditorMainScreen::EDITOR_SCRIPT);
 	ScriptEditor::get_singleton()->goto_help(p_what);
 	emit_signal(SNAME("request_hide"));
 }

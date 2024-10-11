@@ -214,7 +214,7 @@ struct Skeleton {
 	bool use_2d = false;
 	int size = 0;
 	int height = 0;
-	Vector<float> data;
+	LocalVector<float> data;
 
 	bool dirty = false;
 	Skeleton *dirty_list = nullptr;
@@ -510,7 +510,7 @@ public:
 	virtual RID _multimesh_get_mesh(RID p_multimesh) const override;
 	virtual void _multimesh_set_custom_aabb(RID p_multimesh, const AABB &p_aabb) override;
 	virtual AABB _multimesh_get_custom_aabb(RID p_multimesh) const override;
-	virtual AABB _multimesh_get_aabb(RID p_multimesh) const override;
+	virtual AABB _multimesh_get_aabb(RID p_multimesh) override;
 
 	virtual Transform3D _multimesh_instance_get_transform(RID p_multimesh, int p_index) const override;
 	virtual Transform2D _multimesh_instance_get_transform_2d(RID p_multimesh, int p_index) const override;

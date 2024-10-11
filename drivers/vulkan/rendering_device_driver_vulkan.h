@@ -43,11 +43,7 @@
 #endif
 #include "thirdparty/vulkan/vk_mem_alloc.h"
 
-#ifdef USE_VOLK
-#include <volk.h>
-#else
-#include <vulkan/vulkan.h>
-#endif
+#include "drivers/vulkan/godot_vulkan.h"
 
 // Design principles:
 // - Vulkan structs are zero-initialized and fields not requiring a non-zero value are omitted (except in cases where expresivity reasons apply).
@@ -213,6 +209,9 @@ public:
 			VmaAllocation handle = nullptr;
 			VmaAllocationInfo info = {};
 		} allocation; // All 0/null if just a view.
+#ifdef DEBUG_ENABLED
+		bool created_from_extension = false;
+#endif
 	};
 
 	VkSampleCountFlagBits _ensure_supported_sample_count(TextureSamples p_requested_sample_count);
@@ -669,7 +668,7 @@ private:
 			VertexFormatInfo,
 			ShaderInfo,
 			UniformSetInfo>;
-	PagedAllocator<VersatileResource> resources_allocator;
+	PagedAllocator<VersatileResource, true> resources_allocator;
 
 	/******************/
 
